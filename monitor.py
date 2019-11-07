@@ -71,23 +71,23 @@ class Monitor:
                 "connection": f"display{i+1}",
                 "payload": {
                     "screen4": {
-                        "line4": {
+                        "line1": {
                             "text": f"IP: {self.ip}",
                             "inverted": True
                         },
-                        "line5": {
+                        "line2": {
                             "text": f"{self.wifi_status}",
                             "inverted": True
                         },
-                        "line6": {
+                        "line3": {
                             "text": f"{self.web_status} - {self.rfids}",
                             "inverted": True
                         },
-                        "line7": {
+                        "line4": {
                             "text": f"{self.config.mac}",
                             "inverted": True
                         },
-                        "line8": {
+                        "line5": {
                             "text": f"{self.version}",
                             "inverted": True
                         }

@@ -79,8 +79,7 @@ class State:
             stateFile = open("/media/state.json", "r")
             config = json.load(stateFile)
             stateFile.close()
-            print("Doug - Printing")
-            print(config)
+            #print(config)
 
             self.state = config
 
@@ -201,9 +200,7 @@ class State:
     def writeStateToFile(self):
         try:
             stateFile = open("/media/state.json", "w+")
-            print("Saving State")
             stateFile.truncate(0)
-            print(json.dumps(self.state))
             stateFile.write(json.dumps(self.state))
             stateFile.close()
         except Exception as e:

@@ -8,11 +8,14 @@ from threading import Thread
 from misc import Direction
 
 class Displays:
-    def __init__(self, dispatcher):
+    def __init__(self, dispatcher, reset=1):
         print("Starting Displays")
 
         self.active = True
         self.dispatcher = dispatcher
+        self.auto_reset = reset
+
+        self.last_accessed_unit = 0
 
         self.MAX_DISPLAY = 3
         self.DISP_NAMES = [f"display{i+1}" for i in range(self.MAX_DISPLAY)] # ["display1", "display2", "display3"]
@@ -28,7 +31,9 @@ class Displays:
                 "ICON_BASE"     : 407,
                 "ICON_FORMAT"   : 415,
                 "SOUND"         : 416,
-                "ATTEND"        : 417
+                "ATTEND"        : 417,
+                "ACCESS"        : 420,
+                "RESET"         : 429
             },
             "big" : {
                 "ID"            : 0,
@@ -41,7 +46,9 @@ class Displays:
                 "ICON_BASE"     : 1367,
                 "ICON_FORMAT"   : 1382,
                 "SOUND"         : 1383,
-                "ATTEND"        : 1384
+                "ATTEND"        : 1384,
+                "ACCESS"        : 1385,
+                "RESET"         : 1389
             }
         }
         self.DISPLAY_PARAMS = {
@@ -70,25 +77,46 @@ class Displays:
                 "sleep_after_clear_screen"  : 0.3
             }
         }
+
         self.buffer = deque(maxlen=128)
-
         self.connection = self.init_rs485_connection()
-
-        self.display_types = self.get_connected_display_types()
-
-        #self.write_registers(0, "BACKLIGHT", 0)
-        #self.write_registers(1, "BACKLIGHT", 0)
-        #self.write_registers(2, "BACKLIGHT", 0)
-
-        self.show_init_message()
+        self.display_types = [None, None, None]
+        self.multiplier_to_check_connections = 0
 
         self.disp_thread = Thread(target = self.displays_thread)
         self.disp_thread.daemon = True # This makes the thread to exit when the program ends
         self.disp_thread.start()
 
+
     def exit(self):
         self.active = False
         self.disp_thread.join()
+
+
+    def get_display_types(self):
+        return self.display_types
+
+
+    def reset_display(self, display):
+        print(f"Reseting - {display}")
+
+        if display == "display1":
+            self.write_registers(i, "RESET", 0x1248)
+        elif display == "display2":
+            self.write_registers(i, "RESET", 0x1248)
+        elif display == "display3":
+            self.write_registers(i, "RESET", 0x1248)
+        
+
+    def sleep(self, display):
+        print(f"Sleeping - {display}")
+
+        if display == "display1":
+            self.write_registers(0, "RESET", 0x1249)
+        elif display == "display2":
+            self.write_registers(1, "RESET", 0x1249)
+        elif display == "display3":
+            self.write_registers(2, "RESET", 0x1249)
 
 
     def show_init_message(self):
@@ -115,6 +143,7 @@ class Displays:
             }
             self.buffer.append(message)
 
+
     def is_in_num_range(self, value, min, max):
         """
         This function check if a variable is inside a numeric range,
@@ -137,36 +166,54 @@ class Displays:
         client.socket.rs485_mode = rs485_mode
 
         return client
+
     
-    def get_connected_display_types(self):
+    def update_connected_displays(self):
 
-        types = [None, None, None]
+        current_types = self.display_types.copy()
 
-        for i in range(self.MAX_DISPLAY):
+        #Get the types
+        for i in range(3):
             try:
                 # We can't use self.read_register() to read the ID
                 # address (address 0) because we still don't know
                 # the display type.
                 response = self.connection.read_input_registers(0x00,1,unit=i+1)
-                if response.registers[0] == 0xa0a1:
-                    types[i] = "small"
-                    print(f" [*] Display {i+1}: small")
+                
+                if response.isError():
+                    current_types[i] = None
+                elif response.registers[0] == 0xa0a1:
+                    current_types[i] = "small"
                 elif response.registers[0] == 0xa0a2:
-                    types[i] = "big"
-                    print(f" [*] Display {i+1}: big")
-                else:
-                    types[i] = None
-                    print(f" [*] Display {i+1}: none")
-            except:
-                types[i] = None
-                print(f" [*] Display {i+1}: none")
-            
+                    current_types[i] = "big"
+            except Exception as e:
+                print(e)
+                #If there is a error while reading, the type remains the same for
+                #that display untill the next check
+                pass
+           
             time.sleep(0.1)
 
-        return types
+        for i in range(3):
+            if current_types[i] != self.display_types[i]:
+                print(f" [*] Display on port {i+1} is {current_types[i]}")
 
+                self.display_types[i] = current_types[i]
+
+                #We reset when a new display is pluged in. 
+                if current_types[i] != None and self.auto_reset == 1:
+                    self.write_registers(i, "RESET", 0x1248)
+        
     
     def displays_thread(self):
+        print(" [*] Display Thread Starting")
+        self.update_connected_displays()
+
+        #When the application starts we need to wait for the displays
+        #to reset before sendind the initial messages.
+        time.sleep(9) 
+
+        #self.show_init_message()
 
         start = time.time()
 
@@ -175,6 +222,14 @@ class Displays:
             if (time.time() - start) > 0.5:
                 self.check_alert()
                 start = time.time()
+                
+                #After 10*0.5s=5s we check the ports to see if something changed.
+                #This way we can dinamically change the ports.
+                #We are disabling this feature because it's not 100% stable.
+                #self.multiplier_to_check_connections += 1
+                #if self.multiplier_to_check_connections % 10 == 0:
+                #    self.update_connected_displays()
+                #    self.multiplier_to_check_connections = 0
 
             while len(self.buffer) > 0:
                 message = self.buffer.popleft()
@@ -239,6 +294,11 @@ class Displays:
             The function uses the display type ("big" or "small") and
             self.REG_ADDR to discover the numeric address
         '''
+
+        if self.last_accessed_unit != display:
+            self.last_accessed_unit = display
+            time.sleep(0.05)
+
         if ((self.display_types[display] in self.REG_ADDR) and
                 (reg_name in self.REG_ADDR[self.display_types[display]])):
             register = self.REG_ADDR[self.display_types[display]][reg_name]
@@ -267,6 +327,11 @@ class Displays:
             If values is a single value, write_register is called.
             If values is a list of ints, write_registers is called.
         '''
+
+        if self.last_accessed_unit != display:
+            self.last_accessed_unit = display
+            time.sleep(0.05)
+
         # TODO: Check parameters
         try:
             register = self.REG_ADDR[self.display_types[display]][reg_name] + offset
@@ -276,6 +341,7 @@ class Displays:
             else:
                 # Write a single value
                 rq = self.connection.write_register(register, values, unit=display+1)
+
         except:
             print(f" [x] Error while trying to write register {reg_name} wuth offset={offset} in display {display}+1")
 
